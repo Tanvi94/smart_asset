@@ -24,7 +24,6 @@ class OrderUpdateController(
     @PostMapping("/orderupdate")
     fun orderUpdate(@RequestBody request: OrderUpdateRequest): ResponseEntity<OrderUpdateResponse> {
         val response = orderBookService.processOrder(request)
-        chargingOptimizerService.optimize(orderBookService.getOrderBook())
         return ResponseEntity.ok(response)
     }
 
