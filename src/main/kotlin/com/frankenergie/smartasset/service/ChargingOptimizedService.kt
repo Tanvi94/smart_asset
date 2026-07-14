@@ -7,6 +7,7 @@ import com.frankenergie.smartasset.model.*
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.util.UUID
 
 @Service
 class ChargingOptimizerService(
@@ -21,7 +22,8 @@ class ChargingOptimizerService(
         val startTime: LocalDateTime,
         val endTime: LocalDateTime,
     )
-    private val previousAllocations: Map<GroupAllocationKey, BigDecimal> = emptyMap()
+    private var previousAllocations: Map<GroupAllocationKey, BigDecimal> = emptyMap()
+    private val lock = Any()
 
     fun optimizePlan(
         orderBook: OrderBook,
@@ -36,23 +38,79 @@ class ChargingOptimizerService(
         return ChargingPlan(groupAllocations, totalCost)
     }
 
-    fun optimize(orderBook: OrderBook, chargedSoFar: Map<String, BigDecimal> = emptyMap()): ChargingPlan {
+    fun optimize(orderBook: OrderBook, chargedSoFar: Map<String, BigDecimal> = emptyMap()): ChargingPlan = synchronized(lock) {
         val chargedSoFar = purchaseTrackerService.chargedSoFarPerGroup()
         val plan = optimizePlan(orderBook, chargedSoFar)
 
-        plan.groupAllocations.forEach { groupAllocation ->
-            groupAllocation.allocations.forEach { allocation ->
-                val signal = SteeringSignal(
-                    groupId = groupAllocation.groupId,
-                    quarterStart = allocation.startTime,
-                    quarterEnd = allocation.endTime,
-                    chargePowerMW = allocation.mwh.divide(quarterDurationHours)
-                )
-                steeringSignalClient.sendSignal(signal)
+        val newAllocations = buildAllocation(plan)
+        val allocationDiff = getAllocationDifference(previousAllocations, newAllocations)
+
+        for ((key, change) in allocationDiff) {
+            val price = getBestAskPrice(orderBook, key) ?: BigDecimal.ZERO
+            when {
+                change > BigDecimal.ZERO -> {
+                    marketOrderClient.sendOrder(
+                        MarketOrder(
+                            orderId = UUID.randomUUID().toString(),
+                            groupId = key.groupId,
+                            deliveryStart = key.startTime,
+                            deliveryEnd = key.endTime,
+                            side = OrderSide.BUY,
+                            quantity = change,
+                            price = price
+                        )
+                    )
+                    purchaseTrackerService.recordPurchase(
+                        ExecutedPurchase(
+                            groupId = key.groupId,
+                            deliveryStart = key.startTime,
+                            deliveryEnd = key.endTime,
+                            quantity = change,
+                            pricePerMWh = price
+                        )
+                    )
+                }
+                change < BigDecimal.ZERO -> {
+                    val sellPrice = getBestBidPrice(orderBook, key) ?: price
+                    marketOrderClient.sendOrder(
+                        MarketOrder(
+                            orderId = UUID.randomUUID().toString(),
+                            groupId = key.groupId,
+                            deliveryStart = key.startTime,
+                            deliveryEnd = key.endTime,
+                            side = OrderSide.SELL,
+                            quantity = change.negate(),
+                            price = sellPrice
+                        )
+                    )
+                    purchaseTrackerService.updatePurchase(
+                        key.groupId, key.startTime, key.endTime, change.negate(), sellPrice
+                    )
+                }
             }
+
+            steeringSignalClient.sendSignal(
+                SteeringSignal(
+                    groupId = key.groupId,
+                    quarterStart = key.startTime,
+                    quarterEnd = key.endTime,
+                    chargePowerMW = (newAllocations[key] ?: BigDecimal.ZERO).divide(quarterDurationHours)
+                )
+            )
         }
 
+        previousAllocations = newAllocations
         return plan
+    }
+
+    private fun getBestAskPrice(orderBook: OrderBook, key: GroupAllocationKey ): BigDecimal? {
+        val period = DeliveryPeriod(key.startTime, key.endTime)
+        return orderBook.getBestAsk(period)?.price
+    }
+
+    private fun getBestBidPrice(orderBook: OrderBook, key: GroupAllocationKey): BigDecimal? {
+        val period = DeliveryPeriod(key.startTime, key.endTime)
+        return orderBook.getBestBid(period)?.price
     }
 
     private fun optimizeGroup(

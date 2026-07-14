@@ -33,7 +33,9 @@ class MarketOrderClient(
     private fun ensureFileExists() {
         if (!Files.exists(file)) {
             file.parent?.let { Files.createDirectories(it) }
-            Files.createFile(file)
+            try {
+                Files.createFile(file)
+            } catch (_: FileAlreadyExistsException) { }
         }
     }
 
