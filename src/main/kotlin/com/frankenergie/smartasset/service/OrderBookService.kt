@@ -55,7 +55,7 @@ class OrderBookService(
         }
 
         val status = when {
-            matchedQuantity == request.quantity -> "FILLED"
+            matchedQuantity.compareTo(request.quantity) == 0 -> "FILLED"
             matchedQuantity > BigDecimal.ZERO -> "PARTIALLY_FILLED"
             else -> "ACCEPTED"
         }

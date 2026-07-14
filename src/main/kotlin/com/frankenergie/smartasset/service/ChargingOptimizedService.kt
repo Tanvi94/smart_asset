@@ -10,7 +10,8 @@ import java.time.LocalDateTime
 @Service
 class ChargingOptimizerService(
     private val chargingGroups: List<ChargingGroup>,
-    private val steeringSignalClient: SteeringSignalClient
+    private val steeringSignalClient: SteeringSignalClient,
+    private val purchaseTrackerService: PurchaseTrackerService
 ) {
     private val quarterDurationHours = BigDecimal("0.25")
 
@@ -27,6 +28,7 @@ class ChargingOptimizerService(
     }
 
     fun optimize(orderBook: OrderBook, chargedSoFar: Map<String, BigDecimal> = emptyMap()): ChargingPlan {
+        val chargedSoFar = purchaseTrackerService.chargedSoFarPerGroup()
         val plan = optimizePlan(orderBook, chargedSoFar)
 
         plan.groupAllocations.forEach { groupAllocation ->

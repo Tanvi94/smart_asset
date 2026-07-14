@@ -34,4 +34,11 @@ class PurchaseTrackerService {
     fun clear() {
         purchases.clear()
     }
+
+    // energy used to charge per group
+    fun chargedSoFarPerGroup(): Map<String, BigDecimal> {
+        return purchases.groupBy { it.groupId }.mapValues { groupPurchase ->
+            groupPurchase.value.sumOf { it.quantity }
+        }
+    }
 }
