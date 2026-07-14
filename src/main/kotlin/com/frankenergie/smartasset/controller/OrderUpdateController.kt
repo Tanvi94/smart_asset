@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RestController
 class OrderUpdateController(
     private val orderBookService: OrderBookService,
     private val purchaseTrackerService: PurchaseTrackerService,
-    private val chargingOptimizerService: ChargingOptimizerService
 ) {
 
     @PostMapping("/orderupdate")

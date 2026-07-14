@@ -17,9 +17,7 @@ import java.util.UUID
 
 @Service
 class OrderBookService(
-    private val purchaseTrackerService: PurchaseTrackerService,
-    private val marketOrderClient: MarketOrderClient,
-    private val chargingOptimizerService: ChargingOptimizerService
+    private val chargingOptimizerService: ChargingOptimizerService,
 ) {
 
     private val orderBook = OrderBook()
@@ -29,30 +27,6 @@ class OrderBookService(
 
         val period = DeliveryPeriod(request.deliveryStartTime, request.deliveryEndTime)
         val matchedQuantity = orderBook.processOrder(period, request.orderSide, request.quantity, request.price)
-
-        marketOrderClient.sendOrder(
-            MarketOrder(
-                orderId = orderId,
-                groupId = "default",
-                deliveryStart = request.deliveryStartTime,
-                deliveryEnd = request.deliveryEndTime,
-                side = request.orderSide,
-                quantity = request.quantity,
-                price = request.price
-            )
-        )
-
-        if (matchedQuantity > BigDecimal.ZERO && request.orderSide == OrderSide.BUY) {
-            purchaseTrackerService.recordPurchase(
-                ExecutedPurchase(
-                    groupId = "default",
-                    deliveryStart = request.deliveryStartTime,
-                    deliveryEnd = request.deliveryEndTime,
-                    quantity = matchedQuantity,
-                    pricePerMWh = request.price
-                )
-            )
-        }
 
         val status = when {
             matchedQuantity.compareTo(request.quantity) == 0 -> "FILLED"

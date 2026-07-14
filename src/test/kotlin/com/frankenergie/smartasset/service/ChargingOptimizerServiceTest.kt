@@ -1,5 +1,7 @@
 package com.frankenergie.smartasset.service
 
+import com.frankenergie.smartasset.client.MarketOrderClient
+import com.frankenergie.smartasset.client.SteeringSignalClient
 import com.frankenergie.smartasset.domain.OrderBook
 import com.frankenergie.smartasset.model.ChargingGroup
 import com.frankenergie.smartasset.model.DeliveryPeriod
@@ -16,13 +18,13 @@ class ChargingOptimizerServiceTest {
 
     private lateinit var optimizer: ChargingOptimizerService
     private lateinit var orderBook: OrderBook
-    private lateinit var steeringSignalClient: com.frankenergie.smartasset.client.SteeringSignalClient
+    private lateinit var steeringSignalClient: SteeringSignalClient
     private val testFilePath = "test_steering_signals_setup.log"
 
     @BeforeEach
     fun setUp() {
         Files.deleteIfExists(Path.of(testFilePath))
-        steeringSignalClient = com.frankenergie.smartasset.client.SteeringSignalClient(testFilePath)
+        steeringSignalClient = SteeringSignalClient(testFilePath)
 
         val group = ChargingGroup(
             id = "A",
@@ -32,7 +34,11 @@ class ChargingOptimizerServiceTest {
             maxPowerMW = BigDecimal("2")
         )
 
-        optimizer = ChargingOptimizerService(listOf(group), steeringSignalClient)
+        optimizer = ChargingOptimizerService(
+            listOf(group), steeringSignalClient,
+            marketOrderClient = MarketOrderClient("test_market_orders_setup.log"),
+            purchaseTrackerService = PurchaseTrackerService()
+        )
         orderBook = OrderBook()
     }
 
@@ -123,7 +129,9 @@ class ChargingOptimizerServiceTest {
         val testFilePath = "test_steering_signals.log"
         Files.deleteIfExists(Path.of(testFilePath))
 
-        val signalClient = com.frankenergie.smartasset.client.SteeringSignalClient(testFilePath)
+        val signalClient = SteeringSignalClient(testFilePath)
+        val marketOrderClient = MarketOrderClient("test_market_orders.log")
+        val purchaseTrackerService = PurchaseTrackerService()
         val group = ChargingGroup(
             id = "A",
             startTime = LocalDateTime.of(2024, 1, 15, 10, 0),
@@ -131,7 +139,11 @@ class ChargingOptimizerServiceTest {
             neededChargeMWh = BigDecimal("1"),
             maxPowerMW = BigDecimal("4")
         )
-        val emittingOptimizer = ChargingOptimizerService(listOf(group), signalClient)
+        val emittingOptimizer = ChargingOptimizerService(
+            listOf(group), signalClient,
+            marketOrderClient = marketOrderClient,
+            purchaseTrackerService = purchaseTrackerService
+        )
         val period = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
 
         orderBook.processOrder(period, OrderSide.SELL, BigDecimal("10"), BigDecimal("40.00"))

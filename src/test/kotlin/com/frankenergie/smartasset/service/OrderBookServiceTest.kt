@@ -21,8 +21,8 @@ class OrderBookServiceTest {
         purchaseTrackerService = PurchaseTrackerService()
         marketOrderClient = com.frankenergie.smartasset.client.MarketOrderClient("test_market_orders.log")
         steeringSignalClient = com.frankenergie.smartasset.client.SteeringSignalClient("test_steering_signals.log")
-        chargingOptimizerService = ChargingOptimizerService(emptyList(), steeringSignalClient)
-        service = OrderBookService(purchaseTrackerService, marketOrderClient, chargingOptimizerService)
+        chargingOptimizerService = ChargingOptimizerService(emptyList(), steeringSignalClient, marketOrderClient, purchaseTrackerService)
+        service = OrderBookService(chargingOptimizerService)
     }
 
     @Test
