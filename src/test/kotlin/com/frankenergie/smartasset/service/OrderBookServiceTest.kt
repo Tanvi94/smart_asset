@@ -75,4 +75,27 @@ class OrderBookServiceTest {
 
         assertEquals("PARTIALLY_FILLED", response.status)
     }
+
+    @Test
+    fun `processOrder handles BigDecimal scale difference correctly`() {
+        val sellRequest = OrderUpdateRequest(
+            deliveryStartTime = LocalDateTime.of(2024, 1, 15, 10, 0),
+            deliveryEndTime = LocalDateTime.of(2024, 1, 15, 10, 15),
+            orderSide = OrderSide.SELL,
+            quantity = BigDecimal("10.00"),
+            price = BigDecimal("50.00")
+        )
+        service.processOrder(sellRequest)
+
+        val buyRequest = OrderUpdateRequest(
+            deliveryStartTime = LocalDateTime.of(2024, 1, 15, 10, 0),
+            deliveryEndTime = LocalDateTime.of(2024, 1, 15, 10, 15),
+            orderSide = OrderSide.BUY,
+            quantity = BigDecimal("10"),
+            price = BigDecimal("50.00")
+        )
+        val response = service.processOrder(buyRequest)
+
+        assertEquals("FILLED", response.status)
+    }
 }

@@ -126,4 +126,33 @@ class PurchaseTrackerServiceTest {
         assertTrue(tracker.getAllPurchases().isEmpty())
         assertEquals(BigDecimal.ZERO, tracker.getSummary().totalMWh)
     }
+
+    @Test
+    fun `getChargedPerGroup aggregates quantities by group`() {
+        tracker.recordPurchase(ExecutedPurchase("A", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("3"), BigDecimal("50.00")))
+        tracker.recordPurchase(ExecutedPurchase("A", LocalDateTime.of(2024, 1, 15, 10, 15), LocalDateTime.of(2024, 1, 15, 10, 30), BigDecimal("2"), BigDecimal("60.00")))
+        tracker.recordPurchase(ExecutedPurchase("B", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("7"), BigDecimal("45.00")))
+        val charged = tracker.chargedSoFarPerGroup()
+        assertEquals(BigDecimal("5"), charged["A"])
+        assertEquals(BigDecimal("7"), charged["B"])
+        assertNull(charged["C"])
+    }
+
+    @Test
+    fun `reversePurchase reduces charged amount for group`() {
+        tracker.recordPurchase(ExecutedPurchase("A", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("5"), BigDecimal("50.00")))
+        tracker.updatePurchase("A", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("2"), BigDecimal("50.00"))
+        val charged = tracker.chargedSoFarPerGroup()
+        assertEquals(0, BigDecimal("3").compareTo(charged["A"]))
+    }
+
+    @Test
+    fun `reversePurchase nets cost correctly in summary`() {
+        tracker.recordPurchase(ExecutedPurchase("A", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("5"), BigDecimal("50.00")))
+        tracker.updatePurchase("A", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("2"), BigDecimal("45.00"))
+        val summary = tracker.getSummary()
+        assertEquals(0, BigDecimal("3").compareTo(summary.totalMWh))
+        assertEquals(0, BigDecimal("160.00").compareTo(summary.totalCost))
+        assertEquals(0, BigDecimal("53.33").compareTo(summary.averagePricePerMWh))
+    }
 }

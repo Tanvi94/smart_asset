@@ -6,6 +6,7 @@ import com.frankenergie.smartasset.domain.OrderBook
 import com.frankenergie.smartasset.model.ChargingGroup
 import com.frankenergie.smartasset.model.DeliveryPeriod
 import com.frankenergie.smartasset.model.OrderSide
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -19,12 +20,18 @@ class ChargingOptimizerServiceTest {
     private lateinit var optimizer: ChargingOptimizerService
     private lateinit var orderBook: OrderBook
     private lateinit var steeringSignalClient: SteeringSignalClient
-    private val testFilePath = "test_steering_signals_setup.log"
+    private lateinit var marketOrderClient: MarketOrderClient
+    private lateinit var purchaseTracker: PurchaseTrackerService
+    private val steeringFile = "test_opt_steering_signals.log"
+    private val marketOrderFile = "test_opt_market_orders.log"
 
     @BeforeEach
     fun setUp() {
-        Files.deleteIfExists(Path.of(testFilePath))
-        steeringSignalClient = SteeringSignalClient(testFilePath)
+        Files.deleteIfExists(Path.of(steeringFile))
+        Files.deleteIfExists(Path.of(marketOrderFile))
+        steeringSignalClient = SteeringSignalClient(steeringFile)
+        marketOrderClient = MarketOrderClient(marketOrderFile)
+        purchaseTracker = PurchaseTrackerService()
 
         val group = ChargingGroup(
             id = "A",
@@ -40,6 +47,12 @@ class ChargingOptimizerServiceTest {
             purchaseTrackerService = PurchaseTrackerService()
         )
         orderBook = OrderBook()
+    }
+
+    @AfterEach
+    fun tearDown() {
+        Files.deleteIfExists(Path.of(steeringFile))
+        Files.deleteIfExists(Path.of(marketOrderFile))
     }
 
     @Test
@@ -125,33 +138,61 @@ class ChargingOptimizerServiceTest {
     }
 
     @Test
-    fun `emitNewSignals appends only newly seen steering signals`() {
-        val testFilePath = "test_steering_signals.log"
-        Files.deleteIfExists(Path.of(testFilePath))
+    fun `optimize uses chargedSoFar from purchase tracker`() {
+        val group = ChargingGroup(id = "A", startTime = LocalDateTime.of(2024, 1, 15, 10, 0), endTime = LocalDateTime.of(2024, 1, 15, 10, 30), neededChargeMWh = BigDecimal("1"), maxPowerMW = BigDecimal("4"))
+        val localOptimizer = ChargingOptimizerService(listOf(group), steeringSignalClient, marketOrderClient, purchaseTracker)
+        val q1 = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
+        val q2 = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 15), LocalDateTime.of(2024, 1, 15, 10, 30))
+        orderBook.processOrder(q1, OrderSide.SELL, BigDecimal("10"), BigDecimal("40.00"))
+        orderBook.processOrder(q2, OrderSide.SELL, BigDecimal("10"), BigDecimal("50.00"))
+        localOptimizer.optimize(orderBook)
+        val firstSummary = purchaseTracker.getSummary()
+        assertEquals(0, BigDecimal("1").compareTo(firstSummary.totalMWh))
+    }
 
-        val signalClient = SteeringSignalClient(testFilePath)
-        val marketOrderClient = MarketOrderClient("test_market_orders.log")
-        val purchaseTrackerService = PurchaseTrackerService()
-        val group = ChargingGroup(
-            id = "A",
-            startTime = LocalDateTime.of(2024, 1, 15, 10, 0),
-            endTime = LocalDateTime.of(2024, 1, 15, 10, 15),
-            neededChargeMWh = BigDecimal("1"),
-            maxPowerMW = BigDecimal("4")
-        )
-        val emittingOptimizer = ChargingOptimizerService(
-            listOf(group), signalClient,
-            marketOrderClient = marketOrderClient,
-            purchaseTrackerService = purchaseTrackerService
-        )
+    @Test
+    fun `optimize emits steering signals`() {
         val period = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
-
         orderBook.processOrder(period, OrderSide.SELL, BigDecimal("10"), BigDecimal("40.00"))
+        optimizer.optimize(orderBook)
+        val signals = steeringSignalClient.getAllSignals()
+        assertEquals(1, signals.size)
+        assertTrue(signals[0].contains("A"))
+    }
 
-        emittingOptimizer.optimize(orderBook)
+    @Test
+    fun `optimize only emits delta steering signals`() {
+        val period = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
+        orderBook.processOrder(period, OrderSide.SELL, BigDecimal("10"), BigDecimal("40.00"))
+        optimizer.optimize(orderBook)
+        val signalsAfterFirst = steeringSignalClient.getAllSignals().size
+        optimizer.optimize(orderBook)
+        val signalsAfterSecond = steeringSignalClient.getAllSignals().size
+        assertEquals(signalsAfterFirst, signalsAfterSecond)
+    }
 
-        assertEquals(1, signalClient.getAllSignals().size)
+    @Test
+    fun `optimize respects available supply across groups`() {
+        val group1 = ChargingGroup("X", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("5"), BigDecimal("20"))
+        val group2 = ChargingGroup("Y", LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15), BigDecimal("5"), BigDecimal("20"))
+        val sharedOptimizer = ChargingOptimizerService(listOf(group1, group2), steeringSignalClient, marketOrderClient, purchaseTracker)
+        val period = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
+        orderBook.processOrder(period, OrderSide.SELL, BigDecimal("3"), BigDecimal("40.00"))
+        val plan = sharedOptimizer.optimizePlan(orderBook)
+        val totalAllocated = plan.groupAllocations.sumOf { it.totalMWh }
+        assertTrue(totalAllocated.compareTo(BigDecimal("3")) <= 0)
+    }
 
-        Files.deleteIfExists(Path.of(testFilePath))
+    @Test
+    fun `optimize reverses purchase when allocation is dropped`() {
+        val q1 = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 0), LocalDateTime.of(2024, 1, 15, 10, 15))
+        val q2 = DeliveryPeriod(LocalDateTime.of(2024, 1, 15, 10, 15), LocalDateTime.of(2024, 1, 15, 10, 30))
+        orderBook.processOrder(q1, OrderSide.SELL, BigDecimal("10"), BigDecimal("60.00"))
+        optimizer.optimize(orderBook)
+        val mwhAfterFirst = purchaseTracker.getSummary().totalMWh
+        orderBook.processOrder(q2, OrderSide.SELL, BigDecimal("10"), BigDecimal("30.00"))
+        optimizer.optimize(orderBook)
+        val mwhAfterSecond = purchaseTracker.getSummary().totalMWh
+        assertTrue(mwhAfterSecond.compareTo(mwhAfterFirst) <= 0)
     }
 }
